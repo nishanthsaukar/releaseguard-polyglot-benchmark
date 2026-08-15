@@ -63,7 +63,7 @@ def resolve_user(authorization: Optional[str] = Header(None)) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 class TaskCreate(BaseModel):
-    title: str = Field(..., min_length=1, max_length=255)
+    title: str = Field(..., min_length=1, max_length=256)
 
 
 class TaskUpdate(BaseModel):
