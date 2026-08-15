@@ -129,3 +129,77 @@ if user_id is not None and task["user_id"] != user_id:
 All **69/69** existing tests must pass again with no modifications to the test
 suite. No new tests are required; the existing cross-user authorization tests
 are sufficient to confirm the fix.
+
+---
+
+### DEFECT #2 — Task Title Validation Contract Violation
+
+> **Intentionally introduced for the ReleaseGuard benchmark.**
+
+| Field                   | Value |
+|-------------------------|-------|
+| **Category**            | Configuration / API contract |
+| **Severity**            | HIGH |
+| **Affected file**       | `python-app/app/main.py` |
+| **Affected model**      | `TaskCreate` |
+| **Release impact**      | BLOCKED — API accepts data outside its declared contract |
+
+#### Mutation
+
+`TaskCreate.title` field constraint changed from `max_length=255` to `max_length=256`:
+
+```python
+# Before (correct)
+title: str = Field(..., min_length=1, max_length=255)
+
+# After (defect)
+title: str = Field(..., min_length=1, max_length=256)
+```
+
+#### Expected behaviour (clean baseline)
+
+- Any title longer than 255 characters submitted to `POST /tasks` must be
+  rejected with **HTTP 422**.
+- This matches the documented API contract in `python-app/README.md`:
+  `title > 255 chars → 422`.
+
+#### Observed behaviour (mutated)
+
+- A 256-character title submitted to `POST /tasks` is **accepted** and returns
+  **HTTP 201**.
+- `PUT /tasks/{id}` still rejects a 256-character title with **422** because
+  `TaskUpdate.title` retains `max_length=255`.
+- This creates an **inconsistent validation contract** between the two write
+  paths: the same oversized string can be stored via `POST` but cannot be
+  written via `PUT`.
+
+#### Evidence
+
+| Test | HTTP verb | Path | Expected | Got |
+|------|-----------|------|----------|-----|
+| `TestCreateTask::test_create_title_too_long_returns_422` | POST | `/tasks` | 422 | 201 |
+
+#### Test results
+
+| State | Passed | Failed | Total |
+|-------|--------|--------|-------|
+| Before Defect #2 (Defect #1 present) | 60 | 9 | 69 |
+| After Defect #2 | **59** | **10** | 69 |
+
+New failures caused specifically by Defect #2: **1**
+
+The 9 pre-existing Defect #1 authorization failures remain unchanged.
+
+#### Expected remediation
+
+Restore the correct constraint in `TaskCreate`:
+
+```python
+title: str = Field(..., min_length=1, max_length=255)
+```
+
+#### Verification requirement
+
+All **69/69** existing tests must pass again with no modifications to the test
+suite. The corrected constraint must be verified to apply consistently to both
+`TaskCreate` (used by `POST /tasks`) and `TaskUpdate` (used by `PUT /tasks/{id}`).
