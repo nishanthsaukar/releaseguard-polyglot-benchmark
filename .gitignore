@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+
+# Node
+node_modules/
+npm-debug.log*
+coverage/
+
+# Go
+*.test
+
+# Java
+target/
+.gradle/
+*.class
+
+# Rust
+target/
+
+# Local data / secrets
+.env
+*.db
+.DS_Store
