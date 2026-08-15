@@ -157,6 +157,7 @@ def update_task(
 ):
     task = _get_task_for_user(task_id, user_id)
     task["title"] = payload.title
+    task["completed"] = False
     return _task_response(task)
 
 
