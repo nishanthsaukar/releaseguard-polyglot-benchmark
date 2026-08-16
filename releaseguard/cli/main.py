@@ -1,7 +1,7 @@
 """Main CLI entry point for ReleaseGuard.
 
 Usage:
-    releaseguard scan <repository-path>
+    releaseguard scan <repository-path-or-github-url>
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from releaseguard.cli.renderer import render_report
 from releaseguard.evidence.collector import collect_evidence
 from releaseguard.models.core import RepositoryReport
 from releaseguard.policy.policy import decide
+from releaseguard.repository.loader import RepositoryLoadError, load_repository
 from releaseguard.runners.runner import run_tests
 from releaseguard.scanner.commands import detect_test_command
 from releaseguard.scanner.detector import detect_projects
@@ -28,14 +29,22 @@ def main() -> None:
 
     if args[0] == "scan":
         if len(args) < 2:
-            print("Error: 'scan' requires a repository path.", file=sys.stderr)
-            print("Usage: releaseguard scan <repository-path>", file=sys.stderr)
+            print("Error: 'scan' requires a repository path or GitHub URL.", file=sys.stderr)
+            print(
+                "Usage: releaseguard scan <repository-path-or-github-url>",
+                file=sys.stderr,
+            )
             sys.exit(1)
-        repo_path = Path(args[1]).resolve()
-        if not repo_path.is_dir():
-            print(f"Error: '{repo_path}' is not a directory.", file=sys.stderr)
+
+        target = args[1]
+
+        try:
+            with load_repository(target) as repo_path:
+                _cmd_scan(repo_path)
+        except RepositoryLoadError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
             sys.exit(1)
-        _cmd_scan(repo_path)
+
     else:
         print(f"Error: unknown command '{args[0]}'.", file=sys.stderr)
         _print_help()
@@ -58,7 +67,7 @@ def _cmd_scan(repo_path: Path) -> None:
     # 4. Parse / enrich evidence
     runs = collect_evidence(raw_runs)
 
-    # 5. Analyze for risk findings (pass repo_path for source inspection)
+    # 5. Analyze for risk findings
     findings = analyze(runs, repo_path=repo_path)
 
     # 6. Release decision
@@ -81,10 +90,13 @@ def _print_help() -> None:
     print("ReleaseGuard — release-readiness analysis tool")
     print("")
     print("Usage:")
-    print("  releaseguard scan <repository-path>")
+    print("  releaseguard scan <repository-path-or-github-url>")
     print("")
     print("Commands:")
-    print("  scan    Analyze a repository and produce a release-readiness assessment")
+    print(
+        "  scan    Analyze a local repository or public GitHub repository "
+        "and produce a release-readiness assessment"
+    )
 
 
 if __name__ == "__main__":
