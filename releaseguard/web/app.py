@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import streamlit as st
 from pathlib import Path
+
+import streamlit as st
 
 from releaseguard.analyzer.rules import analyze
 from releaseguard.evidence.collector import collect_evidence
@@ -109,6 +110,7 @@ def render_finding(finding) -> None:
 
         if affected_files:
             st.markdown("**Affected files:**")
+
             for path in affected_files:
                 st.code(str(path))
 
@@ -117,12 +119,33 @@ def render_finding(finding) -> None:
         if evidence:
             with st.expander("🔎 Source evidence"):
                 for item in evidence:
-                    file_path = getattr(item, "file_path", None)
-                    line = getattr(item, "line", None)
-                    function = getattr(item, "function_name", None)
-                    excerpt = getattr(item, "source_excerpt", None)
+                    file_path = getattr(
+                        item,
+                        "file_path",
+                        None,
+                    )
 
-                    location = str(file_path or "Unknown")
+                    line = getattr(
+                        item,
+                        "line",
+                        None,
+                    )
+
+                    function = getattr(
+                        item,
+                        "function_name",
+                        None,
+                    )
+
+                    excerpt = getattr(
+                        item,
+                        "source_excerpt",
+                        None,
+                    )
+
+                    location = str(
+                        file_path or "Unknown"
+                    )
 
                     if line:
                         location += f":{line}"
@@ -130,34 +153,107 @@ def render_finding(finding) -> None:
                     if function:
                         location += f" — {function}"
 
-                    st.markdown(f"**{location}**")
+                    st.markdown(
+                        f"**{location}**"
+                    )
 
                     if excerpt:
-                        st.code(excerpt, language="python")
+                        st.code(
+                            excerpt,
+                            language="python",
+                        )
 
 
-def render_report(report: RepositoryReport) -> None:
-    decision = str(report.decision).upper()
+def _get_test_counts(report: RepositoryReport) -> tuple[int, int, int]:
+    """
+    Calculate aggregate test counts for the dashboard.
 
-    if "BLOCKED" in decision:
-        st.error("🚫 RELEASE BLOCKED")
-    elif "REVIEW" in decision:
-        st.warning("⚠️ REVIEW REQUIRED")
-    else:
-        st.success("✅ RELEASE READY")
+    Some runners populate total_tests directly, while others only
+    provide passed/failed counts. When total_tests is missing or zero,
+    derive it from passed + failed.
 
-    st.divider()
-
-    col1, col2, col3 = st.columns(3)
-
+    Returns:
+        (total_tests, passed_tests, failed_tests)
+    """
     total_tests = 0
     passed_tests = 0
     failed_tests = 0
 
     for run in report.test_runs:
-        total_tests += getattr(run, "total_tests", 0) or 0
-        passed_tests += getattr(run, "passed", 0) or 0
-        failed_tests += getattr(run, "failed", 0) or 0
+        passed = getattr(
+            run,
+            "passed",
+            0,
+        ) or 0
+
+        failed = getattr(
+            run,
+            "failed",
+            0,
+        ) or 0
+
+        reported_total = getattr(
+            run,
+            "total_tests",
+            0,
+        ) or 0
+
+        passed = int(passed)
+        failed = int(failed)
+        reported_total = int(reported_total)
+
+        passed_tests += passed
+        failed_tests += failed
+
+        # Prefer an explicitly reported total.
+        #
+        # If the runner did not provide one, derive it from the
+        # executed test outcomes.
+        if reported_total > 0:
+            total_tests += reported_total
+        else:
+            total_tests += passed + failed
+
+    return (
+        total_tests,
+        passed_tests,
+        failed_tests,
+    )
+
+
+def render_report(report: RepositoryReport) -> None:
+    decision = str(
+        report.decision
+    ).upper()
+
+    if "BLOCKED" in decision:
+        st.error(
+            "🚫 RELEASE BLOCKED"
+        )
+
+    elif "REVIEW" in decision:
+        st.warning(
+            "⚠️ REVIEW REQUIRED"
+        )
+
+    else:
+        st.success(
+            "✅ RELEASE READY"
+        )
+
+    st.divider()
+
+    # ---------------------------------------------------------
+    # Test metrics
+    # ---------------------------------------------------------
+
+    (
+        total_tests,
+        passed_tests,
+        failed_tests,
+    ) = _get_test_counts(report)
+
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         st.metric(
@@ -179,11 +275,26 @@ def render_report(report: RepositoryReport) -> None:
 
     st.divider()
 
-    st.subheader("Detected projects")
+    # ---------------------------------------------------------
+    # Detected projects
+    # ---------------------------------------------------------
+
+    st.subheader(
+        "Detected projects"
+    )
 
     for project in report.projects:
-        language = getattr(project, "language", "Unknown")
-        command = getattr(project, "test_command", None)
+        language = getattr(
+            project,
+            "language",
+            "Unknown",
+        )
+
+        command = getattr(
+            project,
+            "test_command",
+            None,
+        )
 
         st.write(
             f"**{language}**"
@@ -196,6 +307,10 @@ def render_report(report: RepositoryReport) -> None:
 
     st.divider()
 
+    # ---------------------------------------------------------
+    # Findings
+    # ---------------------------------------------------------
+
     st.subheader(
         f"Findings ({len(report.findings)})"
     )
@@ -204,6 +319,7 @@ def render_report(report: RepositoryReport) -> None:
         st.success(
             "No release-risk findings were detected."
         )
+
     else:
         for finding in report.findings:
             render_finding(finding)
@@ -232,7 +348,7 @@ def main() -> None:
     )
 
     scan_clicked = st.button(
-        "🔍 Scan Repository",
+        "🔎 Scan Repository",
         type="primary",
         use_container_width=True,
     )
@@ -256,12 +372,29 @@ def main() -> None:
             expanded=True,
         ) as status:
 
-            st.write("📥 Cloning repository...")
-            st.write("🔍 Detecting languages and test suites...")
-            st.write("🧪 Running tests...")
-            st.write("🧾 Collecting failure evidence...")
-            st.write("🔎 Inspecting source code...")
-            st.write("🧠 Classifying release risk...")
+            st.write(
+                "📥 Cloning repository..."
+            )
+
+            st.write(
+                "🔍 Detecting languages and test suites..."
+            )
+
+            st.write(
+                "🧪 Running tests..."
+            )
+
+            st.write(
+                "🧾 Collecting failure evidence..."
+            )
+
+            st.write(
+                "🔎 Inspecting source code..."
+            )
+
+            st.write(
+                "🧠 Classifying release risk..."
+            )
 
             report = scan_repository(
                 github_url.strip()
@@ -285,7 +418,9 @@ def main() -> None:
         st.exception(exc)
         return
 
-    report = st.session_state.get("report")
+    report = st.session_state.get(
+        "report"
+    )
 
     if report:
         render_report(report)
