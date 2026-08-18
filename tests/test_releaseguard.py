@@ -256,6 +256,20 @@ class TestPytestParser:
         assert r.passed == 10
         assert r.total == 12
 
+    def test_collection_errors_are_not_counted_as_failed_tests(self):
+        stdout = textwrap.dedent("""\
+            =============================== ERRORS ===============================
+            ______ ERROR collecting shablona/tests/test_shablona.py ______
+            E   ModuleNotFoundError: No module named 'pandas'
+
+            ========================= 1 error in 0.12s =========================
+        """)
+        r = self._run(stdout, exit_code=2)
+        assert r.failed == 0
+        assert r.total == 0
+        assert r.execution_error is not None
+        assert "1" in r.execution_error
+
     def test_empty_output_no_crash(self):
         r = self._run("", exit_code=1)
         # No counts extracted, but should not raise
@@ -359,6 +373,32 @@ class TestRiskClassification:
         tooling = [f for f in findings if f.category == FindingCategory.TOOLING]
         assert tooling
         assert tooling[0].severity == Severity.HIGH
+
+    def test_collection_error_is_high_not_test_failure_blocker(self):
+        proj = ProjectInfo(
+            language=Language.PYTHON,
+            confidence=0.9,
+            test_command="pytest",
+            test_command_available=True,
+        )
+        run = TestRunResult(
+            project=proj,
+            command="pytest -v",
+            exit_code=2,
+            stdout="ERROR collecting tests/test_app.py\nE   ModuleNotFoundError: No module named 'pandas'",
+            stderr="",
+            duration_seconds=0.1,
+            total=0,
+            passed=0,
+            failed=0,
+            execution_error="pytest reported 1 collection/execution error(s)",
+        )
+        findings = analyze([run])
+        assert any(f.category == FindingCategory.TOOLING for f in findings)
+        assert not any(
+            f.category == FindingCategory.FUNCTIONAL and f.severity == Severity.BLOCKER
+            for f in findings
+        )
 
     def test_all_passed_no_findings(self):
         proj = ProjectInfo(language=Language.PYTHON, confidence=0.9)

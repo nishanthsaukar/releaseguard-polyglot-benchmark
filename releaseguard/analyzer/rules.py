@@ -55,6 +55,10 @@ def _analyze_run(run: TestRunResult, repo_path: Optional[Path]) -> list[Finding]
     if not run.tooling_available:
         return findings
 
+    # A runner can start successfully but fail during collection/import.
+    # This is not the same thing as a test case failing.
+    findings.extend(_rule_execution_error(run))
+
     # Test execution findings
     findings.extend(_rule_tests_failed(run))
     findings.extend(_rule_no_tests_found(run))
@@ -85,6 +89,34 @@ def _rule_tooling_unavailable(run: TestRunResult) -> list[Finding]:
                 f"{run.project.language.value} project: {run.unavailable_reason}"
             ),
             evidence=run.unavailable_reason or "",
+            confidence=1.0,
+        )
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Rule: test execution/collection error
+# ---------------------------------------------------------------------------
+
+def _rule_execution_error(run: TestRunResult) -> list[Finding]:
+    if not run.execution_error:
+        return []
+
+    output = (run.stderr or run.stdout or "").strip()
+    evidence = run.execution_error
+    if output:
+        evidence += "\n" + output[:1000]
+
+    return [
+        Finding(
+            category=FindingCategory.TOOLING,
+            severity=Severity.HIGH,
+            title=f"Test execution error in {run.project.language.value} project",
+            summary=(
+                f"The test runner started, but pytest could not complete "
+                f"normal test collection/execution: {run.execution_error}."
+            ),
+            evidence=evidence,
             confidence=1.0,
         )
     ]
@@ -154,6 +186,8 @@ def _rule_tests_failed(run: TestRunResult) -> list[Finding]:
 # ---------------------------------------------------------------------------
 
 def _rule_no_tests_found(run: TestRunResult) -> list[Finding]:
+    if run.execution_error:
+        return []
     if run.total is None or run.total > 0:
         return []
     return [

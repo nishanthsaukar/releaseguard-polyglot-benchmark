@@ -75,11 +75,16 @@ def parse_pytest(result: TestRunResult) -> TestRunResult:
         result.passed = counts.get("passed", 0)
         result.failed = counts.get("failed", 0)
         result.skipped = counts.get("skipped", 0)
-        # errors count as failures for our purposes
-        if "errors" in counts or "error" in counts:
-            result.failed = (result.failed or 0) + counts.get(
-                "errors", counts.get("error", 0)
+
+        # Pytest collection/import errors are not failing test cases.
+        # Keep them separate so ReleaseGuard does not report a false
+        # "N tests failing" blocker.
+        error_count = counts.get("errors", counts.get("error", 0))
+        if error_count:
+            result.execution_error = (
+                f"pytest reported {error_count} collection/execution error(s)"
             )
+
         result.total = (result.passed or 0) + (result.failed or 0) + (result.skipped or 0)
 
     # --- failing test names ---

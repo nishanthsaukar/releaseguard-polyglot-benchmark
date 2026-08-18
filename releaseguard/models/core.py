@@ -129,15 +129,21 @@ class TestRunResult:
     # Human-readable explanation when the command couldn't even run
     unavailable_reason: Optional[str] = None
 
+    # Set when the test runner started successfully but could not complete
+    # normal test collection/execution (for example, an import/collection error).
+    # This is distinct from a real failing test and from missing tooling.
+    execution_error: Optional[str] = None
+
     @property
     def tooling_available(self) -> bool:
         return self.unavailable_reason is None
 
     @property
     def has_failures(self) -> bool:
+        """Return True only when actual test cases are known to have failed."""
         if self.failed is not None:
             return self.failed > 0
-        return self.exit_code != 0
+        return False
 
 
 # ---------------------------------------------------------------------------
