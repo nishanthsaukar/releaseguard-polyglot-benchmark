@@ -140,10 +140,18 @@ class TestCommandDetection:
     def _project(self, lang: Language) -> ProjectInfo:
         return ProjectInfo(language=lang, confidence=0.9)
 
-    def test_python_command_is_pytest(self, tmp_path):
+    def test_python_command_uses_module_form(self, tmp_path):
         proj = self._project(Language.PYTHON)
         detect_test_command(proj, tmp_path)
-        assert proj.test_command == "pytest"
+        # Display string must be the module form so the runner uses sys.executable
+        assert proj.test_command == "python -m pytest -q"
+
+    def test_python_command_always_available(self, tmp_path):
+        # Python command uses sys.executable which is always present
+        proj = self._project(Language.PYTHON)
+        with patch("shutil.which", return_value=None):
+            detect_test_command(proj, tmp_path)
+        assert proj.test_command_available is True
 
     def test_rust_command_is_cargo_test(self, tmp_path):
         proj = self._project(Language.RUST)
@@ -155,33 +163,38 @@ class TestCommandDetection:
         detect_test_command(proj, tmp_path)
         assert proj.test_command == "go test ./..."
 
-    def test_node_command_is_npm_test(self, tmp_path):
+    def test_node_command_contains_npm_test(self, tmp_path):
         proj = self._project(Language.NODE)
-        detect_test_command(proj, tmp_path)
-        assert proj.test_command == "npm test"
+        with patch("shutil.which", return_value="/usr/bin/npm"):
+            detect_test_command(proj, tmp_path)
+        assert proj.test_command is not None
+        assert "npm" in proj.test_command
+        assert "test" in proj.test_command
 
     def test_java_maven_command_when_pom_exists(self, tmp_path):
         pom = tmp_path / "pom.xml"
         pom.write_text("<project/>")
         proj = self._project(Language.JAVA)
-        detect_test_command(proj, tmp_path)
+        with patch("shutil.which", return_value="/usr/bin/mvn"):
+            detect_test_command(proj, tmp_path)
         assert proj.test_command == "mvn test"
 
     def test_java_gradle_command_when_build_gradle_exists(self, tmp_path):
         gradle = tmp_path / "build.gradle"
         gradle.write_text("// gradle")
         proj = self._project(Language.JAVA)
-        detect_test_command(proj, tmp_path)
+        with patch("shutil.which", return_value="/usr/bin/gradle"):
+            detect_test_command(proj, tmp_path)
         assert proj.test_command == "gradle test"
 
-    def test_pytest_available_when_pytest_on_path(self, tmp_path):
-        proj = self._project(Language.PYTHON)
-        with patch("shutil.which", return_value="/usr/bin/pytest"):
+    def test_cargo_available_when_cargo_on_path(self, tmp_path):
+        proj = self._project(Language.RUST)
+        with patch("shutil.which", return_value="/usr/bin/cargo"):
             detect_test_command(proj, tmp_path)
         assert proj.test_command_available is True
 
-    def test_pytest_unavailable_when_not_on_path(self, tmp_path):
-        proj = self._project(Language.PYTHON)
+    def test_cargo_unavailable_when_not_on_path(self, tmp_path):
+        proj = self._project(Language.RUST)
         with patch("shutil.which", return_value=None):
             detect_test_command(proj, tmp_path)
         assert proj.test_command_available is False

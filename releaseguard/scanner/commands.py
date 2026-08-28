@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import sys
 from pathlib import Path
 
 from releaseguard.models.core import Language, ProjectInfo
@@ -35,40 +37,106 @@ def _pick_command(language: Language, repo_path: Path) -> tuple[str | None, bool
     Returns (cmd, True) when the tool is installed and a project file exists.
     """
     if language == Language.PYTHON:
-        return _check_tool("pytest", "pytest")
+        # Store a human-readable command string for display purposes.
+        # The runner uses sys.executable directly to avoid shlex.split
+        # breaking paths that contain spaces (common on Windows).
+        return "python -m pytest -q", True
 
     if language == Language.RUST:
-        return _check_tool("cargo test", "cargo")
+        exe = _resolve_executable("cargo")
+        return "cargo test", exe is not None
 
     if language == Language.GO:
-        return _check_tool("go test ./...", "go")
+        exe = _resolve_executable("go")
+        return "go test ./...", exe is not None
 
     if language == Language.NODE:
-        # Require package.json with a test script
-        pkg = repo_path / "package.json"
-        # Look one level deeper too (monorepo)
-        if not pkg.exists():
-            candidates = list(repo_path.rglob("package.json"))
-            pkg = candidates[0] if candidates else pkg
-        return _check_tool("npm test", "npm")
+        exe = _resolve_executable("npm")
+        # Build the command using the resolved executable name so it works
+        # cross-platform (npm vs npm.cmd) while displaying cleanly.
+        npm_cmd = exe if exe else "npm"
+        return f"{npm_cmd} test", exe is not None
 
     if language == Language.JAVA:
-        # Prefer Maven if pom.xml exists, fall back to Gradle
+        # Prefer project-local wrappers first, then system-wide tools.
         has_pom = bool(list(repo_path.rglob("pom.xml")))
         has_gradle = bool(
             list(repo_path.rglob("build.gradle"))
             + list(repo_path.rglob("build.gradle.kts"))
         )
         if has_pom:
-            return _check_tool("mvn test", "mvn")
+            cmd, available = _resolve_maven(repo_path)
+            return cmd, available
         if has_gradle:
-            return _check_tool("gradle test", "gradle")
+            cmd, available = _resolve_gradle(repo_path)
+            return cmd, available
         return None, None
 
     return None, None
 
 
+def _resolve_executable(name: str) -> str | None:
+    """Return the executable name/path to use for *name*, or None if unavailable.
+
+    On Windows, also checks for ``<name>.cmd`` which is the form that npm,
+    mvn, and other Node/Java tooling install under.
+    """
+    # Direct hit first (works on Unix and Windows when on PATH as-is)
+    found = shutil.which(name)
+    if found:
+        return name  # return the plain name, not the full path
+
+    # Windows-specific: try the .cmd wrapper
+    if os.name == "nt":
+        found = shutil.which(name + ".cmd")
+        if found:
+            return name + ".cmd"
+
+    return None
+
+
+def _resolve_maven(repo_path: Path) -> tuple[str, bool]:
+    """Return (maven_command, available) preferring local wrappers."""
+    for wrapper in _local_wrappers(repo_path, "mvnw"):
+        return f"{wrapper} test", True
+
+    exe = _resolve_executable("mvn")
+    return "mvn test", exe is not None
+
+
+def _resolve_gradle(repo_path: Path) -> tuple[str, bool]:
+    """Return (gradle_command, available) preferring local wrappers."""
+    for wrapper in _local_wrappers(repo_path, "gradlew"):
+        return f"{wrapper} test", True
+
+    exe = _resolve_executable("gradle")
+    return "gradle test", exe is not None
+
+
+def _local_wrappers(repo_path: Path, base: str) -> list[str]:
+    """Return paths to project-local wrappers (mvnw / gradlew) if they exist.
+
+    On Windows also checks for the .cmd/.bat form.
+    Returns a list of usable wrapper path strings (empty if none found).
+    """
+    candidates = [base]
+    if os.name == "nt":
+        candidates.append(base + ".cmd")
+        candidates.append(base + ".bat")
+
+    found: list[str] = []
+    for candidate in candidates:
+        p = repo_path / candidate
+        if p.exists():
+            found.append(str(p))
+            break  # first match wins
+    return found
+
+
 def _check_tool(command: str, executable: str) -> tuple[str, bool]:
-    """Return (command, True) if executable is on PATH, else (command, False)."""
-    available = shutil.which(executable) is not None
+    """Return (command, True) if executable is on PATH, else (command, False).
+
+    Kept for backward compatibility; prefer _resolve_executable() in new code.
+    """
+    available = _resolve_executable(executable) is not None
     return command, available
