@@ -290,6 +290,11 @@ class TestGoParser:
         assert r.total == 4
         assert len(r.failures) == 2
 
+    def test_no_output_leaves_counts_none(self):
+        r = self._run(stdout="", stderr="")
+        assert r.total is None
+        assert r.passed is None
+
 
 # ===========================================================================
 # Rust parser
@@ -517,8 +522,6 @@ class TestCollectorDispatch:
     def test_node_dispatched_to_node_parser(self):
         from releaseguard.evidence.collector import collect_evidence
         stderr = "ℹ tests 2\nℹ pass 2\nℹ fail 0\n"
-        results = collect_evidence([self._make_result(Language.NODE, stdout="", exit_code=0)])
-        # Patch stderr via a fresh result
         r = _result(Language.NODE, stdout="", stderr=stderr)
         enriched = collect_evidence([r])
         assert enriched[0].total == 2
