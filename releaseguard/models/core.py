@@ -31,7 +31,7 @@ class Severity(str, Enum):
     HIGH = "HIGH"
     BLOCKER = "BLOCKER"
 
-    # Kept for compatibility with rules that may use CRITICAL.
+    # Compatibility with older/newer rules.
     CRITICAL = "CRITICAL"
 
 
@@ -40,9 +40,6 @@ class FindingCategory(str, Enum):
 
     # Generic application behavior problems.
     FUNCTIONAL = "FUNCTIONAL"
-
-    # API contract failures.
-    API_CONTRACT = "API_CONTRACT"
 
     # Test execution and test-suite problems.
     TESTING = "TESTING"
@@ -56,6 +53,9 @@ class FindingCategory(str, Enum):
 
     # API/data validation problems.
     VALIDATION = "VALIDATION"
+
+    # Explicit API contract violations.
+    API_CONTRACT = "API_CONTRACT"
 
     # Incorrect state changes.
     STATE_TRANSITION = "STATE_TRANSITION"
@@ -71,7 +71,9 @@ class ReleaseDecision(str, Enum):
     """Final release-readiness decision."""
 
     READY = "READY"
+
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
+
     BLOCKED = "BLOCKED"
 
     # Backward compatibility.
@@ -130,11 +132,6 @@ class ProjectInfo:
     """Information about a detected project inside a repository.
 
     ``project_path`` is relative to the repository root.
-
-    Examples:
-        "." -> repository root
-        "python-app" -> repository/python-app
-        "services/api" -> repository/services/api
     """
 
     language: Language
@@ -199,9 +196,6 @@ class TestRunResult:
     duration_seconds: float
 
     # Parsed test counts.
-    #
-    # None means the output could not be reliably parsed.
-    # 0 means the parser positively determined zero tests.
     total: Optional[int] = None
     passed: Optional[int] = None
     failed: Optional[int] = None
@@ -214,7 +208,6 @@ class TestRunResult:
     unavailable_reason: Optional[str] = None
 
     # Reason the test runner started but could not complete normally.
-    # Example: pytest collection/import error.
     execution_error: Optional[str] = None
 
     @property
