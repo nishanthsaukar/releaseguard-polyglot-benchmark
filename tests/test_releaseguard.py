@@ -161,7 +161,7 @@ class TestCommandDetection:
     def test_go_command_is_go_test(self, tmp_path):
         proj = self._project(Language.GO)
         detect_test_command(proj, tmp_path)
-        assert proj.test_command == "go test ./..."
+        assert proj.test_command == "go test -json ./..."
 
     def test_node_command_contains_npm_test(self, tmp_path):
         proj = self._project(Language.NODE)

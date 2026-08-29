@@ -55,13 +55,16 @@ def _pick_command(
         return "cargo test", False
 
     # Go
+    #
+    # Use JSON output so ReleaseGuard can reliably determine the number
+    # of tests that passed, failed, or were skipped.
     if language == Language.GO:
         go = _resolve_executable("go")
 
         if go:
-            return f"{go} test ./...", True
+            return f"{go} test -json ./...", True
 
-        return "go test ./...", False
+        return "go test -json ./...", False
 
     # Node.js
     if language == Language.NODE:
