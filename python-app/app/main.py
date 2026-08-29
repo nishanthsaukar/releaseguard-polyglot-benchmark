@@ -63,7 +63,7 @@ def resolve_user(authorization: Optional[str] = Header(None)) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 class TaskCreate(BaseModel):
-    title: str = Field(..., min_length=1, max_length=255)
+    title: str = Field(..., min_length=1, max_length=256)
 
 
 class TaskUpdate(BaseModel):
@@ -101,8 +101,6 @@ def _get_task_for_user(task_id: int, user_id: Optional[str]) -> dict:
     """
     task = tasks.get(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if user_id is not None and task["user_id"] != user_id:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
 
@@ -159,6 +157,7 @@ def update_task(
 ):
     task = _get_task_for_user(task_id, user_id)
     task["title"] = payload.title
+    task["completed"] = False
     return _task_response(task)
 
 
