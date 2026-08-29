@@ -14,6 +14,7 @@ from releaseguard.models.core import Language, ProjectInfo, TestRunResult
 
 _DEFAULT_TIMEOUT = 300
 _PYTHON_DEP_TIMEOUT = 180
+_NODE_DEP_TIMEOUT = 300
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +60,12 @@ def run_tests(project: ProjectInfo, repo_path: Path) -> TestRunResult:
     # Install Python dependencies when requirements.txt exists.
     if project.language == Language.PYTHON:
         _install_python_deps(cwd)
+
+    # Install Node.js dependencies deterministically before running tests.
+    if project.language == Language.NODE:
+        dep_result = _install_node_deps(cwd, project)
+        if dep_result is not None:
+            return dep_result
 
     start = time.monotonic()
 
@@ -273,6 +280,76 @@ def _install_python_deps(cwd: Path) -> None:
         # Do not crash the ReleaseGuard scan.
         # The actual pytest execution will provide useful failure evidence.
         return
+
+
+# ---------------------------------------------------------------------------
+# Node.js dependency installation
+# ---------------------------------------------------------------------------
+
+def _install_node_deps(cwd: Path, project: "ProjectInfo") -> "TestRunResult | None":
+    """Install Node.js dependencies before running tests.
+
+    Uses ``npm ci`` when package-lock.json is present (deterministic),
+    otherwise falls back to ``npm install``.
+
+    Returns None on success.
+    Returns a TestRunResult with unavailable_reason set when installation fails,
+    so that the caller can immediately return it without running tests.
+    """
+    from releaseguard.models.core import TestRunResult  # local import avoids cycle
+
+    lock_file = cwd / "package-lock.json"
+    pkg_file = cwd / "package.json"
+
+    if lock_file.exists():
+        install_cmd = ["npm", "ci"]
+    elif pkg_file.exists():
+        install_cmd = ["npm", "install"]
+    else:
+        # No package.json at all — nothing to install; let npm fail naturally.
+        return None
+
+    # Resolve the npm executable (handles Windows npm.cmd).
+    npm_resolved = _resolve_executable(install_cmd[0])
+    if npm_resolved is None:
+        return _unavailable(
+            project,
+            f"npm not found on PATH; cannot install Node.js dependencies",
+        )
+    install_cmd[0] = npm_resolved
+
+    try:
+        proc = subprocess.run(
+            install_cmd,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=_NODE_DEP_TIMEOUT,
+            check=False,
+        )
+    except FileNotFoundError:
+        return _unavailable(project, "npm not found on PATH; cannot install Node.js dependencies")
+    except subprocess.TimeoutExpired:
+        return _unavailable(project, f"npm dependency installation timed out after {_NODE_DEP_TIMEOUT}s")
+    except Exception as exc:  # noqa: BLE001
+        return _unavailable(project, f"npm dependency installation failed with unexpected error: {exc}")
+
+    if proc.returncode != 0:
+        stderr_snippet = (proc.stderr or proc.stdout or "").strip()[:500]
+        return TestRunResult(
+            project=project,
+            command=" ".join(install_cmd),
+            exit_code=proc.returncode,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            duration_seconds=0.0,
+            unavailable_reason=(
+                f"Node.js dependency installation failed (exit {proc.returncode}): "
+                f"{stderr_snippet}"
+            ),
+        )
+
+    return None
 
 
 # ---------------------------------------------------------------------------

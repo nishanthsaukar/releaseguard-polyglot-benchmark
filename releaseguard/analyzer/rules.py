@@ -128,6 +128,40 @@ def _rule_execution_error(run: TestRunResult) -> list[Finding]:
 # ---------------------------------------------------------------------------
 
 def _rule_tests_failed(run: TestRunResult) -> list[Finding]:
+    # CASE A: exit_code != 0 AND parsed failed count is unavailable/zero
+    # AND total test count is unknown.
+    # A command can exit non-zero even when the parser cannot determine failed
+    # test counts.  This must never silently become RELEASE READY.
+    if run.exit_code != 0 and not run.has_failures and run.total is None:
+        output_snippet = ""
+        if run.stderr:
+            output_snippet += run.stderr[:500]
+        if run.stdout:
+            output_snippet += ("\n" if output_snippet else "") + run.stdout[:300]
+        if not output_snippet:
+            output_snippet = "(no output captured)"
+        return [
+            Finding(
+                category=FindingCategory.TESTING,
+                severity=Severity.HIGH,
+                title=(
+                    f"Test command exited non-zero with unverifiable results "
+                    f"in {run.project.language.value} project"
+                ),
+                summary=(
+                    f"The test command '{run.command}' exited with code "
+                    f"{run.exit_code} and no test counts could be determined "
+                    f"from the output. Test execution could not be verified — "
+                    "release must not proceed until this is resolved."
+                ),
+                evidence=(
+                    f"exit_code={run.exit_code}  total=unknown  failed=unknown\n"
+                    + output_snippet
+                ),
+                confidence=1.0,
+            )
+        ]
+
     if not run.has_failures:
         return []
 
@@ -135,8 +169,10 @@ def _rule_tests_failed(run: TestRunResult) -> list[Finding]:
     total = run.total or 0
     passed = run.passed or 0
 
-    # If we have no parsed counts, the exit code alone is insufficient.
-    if failed == 0 and total == 0:
+    # Known non-zero exit but parser yielded no useful counts (failed>0 was set
+    # manually or via has_failures but totals are still zero).
+    if failed > 0 and total == 0:
+        output_snippet = (run.stderr or run.stdout or "")[:500] or "(no output captured)"
         return [
             Finding(
                 category=FindingCategory.TESTING,
@@ -149,7 +185,7 @@ def _rule_tests_failed(run: TestRunResult) -> list[Finding]:
                 ),
                 evidence=(
                     f"exit_code={run.exit_code}\n"
-                    + (run.stderr[:500] if run.stderr else "(no stderr captured)")
+                    + output_snippet
                 ),
                 confidence=0.6,
             )
