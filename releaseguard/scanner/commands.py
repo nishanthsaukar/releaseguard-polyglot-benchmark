@@ -1,10 +1,9 @@
-"""Test command detection for each language."""
+"""Test command detection for each supported language."""
 
 from __future__ import annotations
 
 import os
 import shutil
-import sys
 from pathlib import Path
 
 from releaseguard.models.core import Language, ProjectInfo
@@ -14,129 +13,284 @@ from releaseguard.models.core import Language, ProjectInfo
 # Public API
 # ---------------------------------------------------------------------------
 
-def detect_test_command(project: ProjectInfo, repo_path: Path) -> ProjectInfo:
-    """Populate project.test_command and project.test_command_available.
 
-    Modifies the ProjectInfo in-place and also returns it for convenience.
-    """
-    command, available = _pick_command(project.language, repo_path)
+def detect_test_command(project: ProjectInfo, repo_path: Path) -> ProjectInfo:
+    """Populate the project's test command and tool availability."""
+
+    project_root = _resolve_project_root(project, repo_path)
+
+    command, available = _pick_command(
+        language=project.language,
+        project_root=project_root,
+    )
+
     project.test_command = command
     project.test_command_available = available
+
     return project
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Command selection
 # ---------------------------------------------------------------------------
 
-def _pick_command(language: Language, repo_path: Path) -> tuple[str | None, bool | None]:
-    """Return (command_string, is_available).
 
-    Returns (None, None) when no test command is applicable.
-    Returns (cmd, False) when the tool is not installed.
-    Returns (cmd, True) when the tool is installed and a project file exists.
-    """
+def _pick_command(
+    language: Language,
+    project_root: Path,
+) -> tuple[str | None, bool | None]:
+    """Return the test command and whether required tooling is available."""
+
+    # Python is handled specially by the runner using sys.executable.
     if language == Language.PYTHON:
-        # Store a human-readable command string for display purposes.
-        # The runner uses sys.executable directly to avoid shlex.split
-        # breaking paths that contain spaces (common on Windows).
         return "python -m pytest -q", True
 
+    # Rust
     if language == Language.RUST:
-        exe = _resolve_executable("cargo")
-        return "cargo test", exe is not None
+        cargo = _resolve_executable("cargo")
 
+        if cargo:
+            return f"{cargo} test", True
+
+        return "cargo test", False
+
+    # Go
     if language == Language.GO:
-        exe = _resolve_executable("go")
-        return "go test ./...", exe is not None
+        go = _resolve_executable("go")
 
+        if go:
+            return f"{go} test ./...", True
+
+        return "go test ./...", False
+
+    # Node.js
     if language == Language.NODE:
-        exe = _resolve_executable("npm")
-        # Build the command using the resolved executable name so it works
-        # cross-platform (npm vs npm.cmd) while displaying cleanly.
-        npm_cmd = exe if exe else "npm"
-        return f"{npm_cmd} test", exe is not None
+        return _resolve_node_command(project_root)
 
+    # Java
     if language == Language.JAVA:
-        # Prefer project-local wrappers first, then system-wide tools.
-        has_pom = bool(list(repo_path.rglob("pom.xml")))
-        has_gradle = bool(
-            list(repo_path.rglob("build.gradle"))
-            + list(repo_path.rglob("build.gradle.kts"))
-        )
-        if has_pom:
-            cmd, available = _resolve_maven(repo_path)
-            return cmd, available
-        if has_gradle:
-            cmd, available = _resolve_gradle(repo_path)
-            return cmd, available
-        return None, None
+        return _resolve_java_command(project_root)
 
     return None, None
 
 
+# ---------------------------------------------------------------------------
+# Project root resolution
+# ---------------------------------------------------------------------------
+
+
+def _resolve_project_root(
+    project: ProjectInfo,
+    repo_path: Path,
+) -> Path:
+    """Resolve the actual directory containing the detected project."""
+
+    if project.project_path:
+        candidate = repo_path / project.project_path
+
+        if candidate.is_dir():
+            return candidate
+
+    for evidence_file in project.evidence_files:
+        evidence_path = repo_path / evidence_file
+
+        if evidence_path.exists():
+            return evidence_path.parent
+
+    return repo_path
+
+
+# ---------------------------------------------------------------------------
+# Executable resolution
+# ---------------------------------------------------------------------------
+
+
 def _resolve_executable(name: str) -> str | None:
-    """Return the executable name/path to use for *name*, or None if unavailable.
+    """Return a runnable executable name if available on PATH."""
 
-    On Windows, also checks for ``<name>.cmd`` which is the form that npm,
-    mvn, and other Node/Java tooling install under.
-    """
-    # Direct hit first (works on Unix and Windows when on PATH as-is)
-    found = shutil.which(name)
-    if found:
-        return name  # return the plain name, not the full path
+    candidates = [name]
 
-    # Windows-specific: try the .cmd wrapper
     if os.name == "nt":
-        found = shutil.which(name + ".cmd")
-        if found:
-            return name + ".cmd"
+        candidates.extend(
+            [
+                f"{name}.cmd",
+                f"{name}.bat",
+                f"{name}.exe",
+            ]
+        )
+
+    for candidate in candidates:
+        if shutil.which(candidate):
+            return candidate
 
     return None
 
 
-def _resolve_maven(repo_path: Path) -> tuple[str, bool]:
-    """Return (maven_command, available) preferring local wrappers."""
-    for wrapper in _local_wrappers(repo_path, "mvnw"):
-        return f"{wrapper} test", True
-
-    exe = _resolve_executable("mvn")
-    return "mvn test", exe is not None
+# ---------------------------------------------------------------------------
+# Node.js
+# ---------------------------------------------------------------------------
 
 
-def _resolve_gradle(repo_path: Path) -> tuple[str, bool]:
-    """Return (gradle_command, available) preferring local wrappers."""
-    for wrapper in _local_wrappers(repo_path, "gradlew"):
-        return f"{wrapper} test", True
+def _resolve_node_command(
+    project_root: Path,
+) -> tuple[str, bool]:
+    """Resolve the correct Node.js test command."""
 
-    exe = _resolve_executable("gradle")
-    return "gradle test", exe is not None
+    npm = _resolve_executable("npm")
+
+    if npm:
+        return f"{npm} test", True
+
+    return "npm test", False
+
+
+# ---------------------------------------------------------------------------
+# Java
+# ---------------------------------------------------------------------------
+
+
+def _resolve_java_command(
+    project_root: Path,
+) -> tuple[str | None, bool | None]:
+    """Resolve Maven or Gradle test commands for a Java project."""
+
+    pom_file = project_root / "pom.xml"
+
+    gradle_file = project_root / "build.gradle"
+    gradle_kts_file = project_root / "build.gradle.kts"
+
+    if pom_file.is_file():
+        return _resolve_maven(project_root)
+
+    if gradle_file.is_file() or gradle_kts_file.is_file():
+        return _resolve_gradle(project_root)
+
+    return None, None
+
+
+# ---------------------------------------------------------------------------
+# Wrapper resolution
+# ---------------------------------------------------------------------------
 
 
 def _local_wrappers(repo_path: Path, base: str) -> list[str]:
-    """Return paths to project-local wrappers (mvnw / gradlew) if they exist.
+    """Find project-local Maven or Gradle wrapper files.
 
-    On Windows also checks for the .cmd/.bat form.
-    Returns a list of usable wrapper path strings (empty if none found).
+    This function is retained for backward compatibility with the test suite.
+
+    Examples on Windows:
+        mvnw.cmd
+        mvnw.bat
+        gradlew.cmd
+        gradlew.bat
+
+    Examples on Unix:
+        mvnw
+        gradlew
     """
+
     candidates = [base]
+
     if os.name == "nt":
-        candidates.append(base + ".cmd")
-        candidates.append(base + ".bat")
+        candidates.extend(
+            [
+                f"{base}.cmd",
+                f"{base}.bat",
+            ]
+        )
 
-    found: list[str] = []
+    wrappers: list[str] = []
+
     for candidate in candidates:
-        p = repo_path / candidate
-        if p.exists():
-            found.append(str(p))
-            break  # first match wins
-    return found
+        path = repo_path / candidate
+
+        if path.is_file():
+            wrappers.append(str(path))
+            break
+
+    return wrappers
 
 
-def _check_tool(command: str, executable: str) -> tuple[str, bool]:
-    """Return (command, True) if executable is on PATH, else (command, False).
+def _find_wrapper(
+    project_root: Path,
+    base_name: str,
+) -> Path | None:
+    """Find a Maven or Gradle wrapper in the project root."""
 
-    Kept for backward compatibility; prefer _resolve_executable() in new code.
-    """
+    wrappers = _local_wrappers(project_root, base_name)
+
+    if not wrappers:
+        return None
+
+    return Path(wrappers[0])
+
+
+def _wrapper_command(
+    wrapper: Path,
+    argument: str,
+) -> str:
+    """Build a safely quoted wrapper command."""
+
+    return f'"{wrapper}" {argument}'
+
+
+# ---------------------------------------------------------------------------
+# Maven
+# ---------------------------------------------------------------------------
+
+
+def _resolve_maven(
+    project_root: Path,
+) -> tuple[str, bool]:
+    """Resolve the best available Maven test command."""
+
+    wrapper = _find_wrapper(project_root, "mvnw")
+
+    if wrapper is not None:
+        return _wrapper_command(wrapper, "test"), True
+
+    mvn = _resolve_executable("mvn")
+
+    if mvn:
+        return f"{mvn} test", True
+
+    return "mvn test", False
+
+
+# ---------------------------------------------------------------------------
+# Gradle
+# ---------------------------------------------------------------------------
+
+
+def _resolve_gradle(
+    project_root: Path,
+) -> tuple[str, bool]:
+    """Resolve the best available Gradle test command."""
+
+    wrapper = _find_wrapper(project_root, "gradlew")
+
+    if wrapper is not None:
+        return _wrapper_command(wrapper, "test"), True
+
+    gradle = _resolve_executable("gradle")
+
+    if gradle:
+        return f"{gradle} test", True
+
+    return "gradle test", False
+
+
+# ---------------------------------------------------------------------------
+# Backward compatibility
+# ---------------------------------------------------------------------------
+
+
+def _check_tool(
+    command: str,
+    executable: str,
+) -> tuple[str, bool]:
+    """Backward-compatible executable availability helper."""
+
     available = _resolve_executable(executable) is not None
+
     return command, available

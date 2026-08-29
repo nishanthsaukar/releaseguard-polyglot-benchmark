@@ -4,181 +4,291 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Optional
+
+
+# ---------------------------------------------------------------------------
+# Enums
+# ---------------------------------------------------------------------------
+
+
+class Language(str, Enum):
+    """Supported project languages."""
+
+    PYTHON = "python"
+    NODE = "node"
+    JAVA = "java"
+    GO = "go"
+    RUST = "rust"
+
+
+class Severity(str, Enum):
+    """Severity levels for release-risk findings."""
+
+    INFO = "INFO"
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    BLOCKER = "BLOCKER"
+
+    # Kept for compatibility with rules that may use CRITICAL.
+    CRITICAL = "CRITICAL"
+
+
+class FindingCategory(str, Enum):
+    """Categories of release-risk findings."""
+
+    # Generic application behavior problems.
+    FUNCTIONAL = "FUNCTIONAL"
+
+    # API contract failures.
+    API_CONTRACT = "API_CONTRACT"
+
+    # Test execution and test-suite problems.
+    TESTING = "TESTING"
+    TEST_FAILURE = "TEST_FAILURE"
+
+    # Tool/runtime/dependency problems.
+    TOOLING = "TOOLING"
+
+    # Authorization and access-control problems.
+    AUTHORIZATION = "AUTHORIZATION"
+
+    # API/data validation problems.
+    VALIDATION = "VALIDATION"
+
+    # Incorrect state changes.
+    STATE_TRANSITION = "STATE_TRANSITION"
+
+    # Security-related problems.
+    SECURITY = "SECURITY"
+
+    # Fallback category.
+    UNKNOWN = "UNKNOWN"
+
+
+class ReleaseDecision(str, Enum):
+    """Final release-readiness decision."""
+
+    READY = "READY"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+    BLOCKED = "BLOCKED"
+
+    # Backward compatibility.
+    NOT_READY = "NOT_READY"
+
+    UNKNOWN = "UNKNOWN"
 
 
 # ---------------------------------------------------------------------------
 # Source evidence
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SourceEvidence:
-    """Source-code evidence associated with a finding.
+    """Source-code evidence supporting a finding."""
 
-    All fields are optional — when evidence cannot be found, the
-    ``available`` flag is False and the other fields will be empty/None.
-    Callers must never fabricate values; leave fields at their defaults
-    when the information cannot be reliably determined.
-    """
+    # Whether source evidence could actually be located.
+    available: bool = False
 
-    available: bool = False          # True only when at least file is known
+    # Relative source file path.
+    source_file: Optional[str] = None
 
-    source_file: Optional[str] = None        # relative path in repo
-    source_function: Optional[str] = None    # function/method name
-    source_line: Optional[int] = None        # 1-based line number
-    source_line_end: Optional[int] = None    # inclusive end line (for ranges)
-    source_excerpt: Optional[str] = None     # a few lines of actual source
-    reasoning: Optional[str] = None          # deterministic explanation
+    # Function or method containing the evidence, when known.
+    source_function: Optional[str] = None
 
-    # How the evidence was obtained: "traceback", "ast", "heuristic", "none"
+    # Starting source line containing the evidence.
+    source_line: Optional[int] = None
+
+    # Ending source line containing the evidence.
+    source_line_end: Optional[int] = None
+
+    # Relevant source-code excerpt.
+    source_excerpt: Optional[str] = None
+
+    # How the evidence was discovered.
+    #
+    # Examples:
+    #   "traceback"
+    #   "heuristic"
+    #   "ast"
+    #   "none"
     evidence_method: str = "none"
 
-
-# ---------------------------------------------------------------------------
-# Enumerations
-# ---------------------------------------------------------------------------
-
-class Language(str, Enum):
-    PYTHON = "Python"
-    RUST = "Rust"
-    GO = "Go"
-    NODE = "Node.js"
-    JAVA = "Java"
-    UNKNOWN = "Unknown"
-
-
-class Severity(str, Enum):
-    BLOCKER = "BLOCKER"
-    HIGH = "HIGH"
-    MEDIUM = "MEDIUM"
-    LOW = "LOW"
-    INFO = "INFO"
-
-
-class FindingCategory(str, Enum):
-    SECURITY = "security"
-    FUNCTIONAL = "functional"
-    API_CONTRACT = "api_contract"
-    CONFIGURATION = "configuration"
-    TESTING = "testing"
-    TOOLING = "tooling"
-    UNKNOWN = "unknown"
-
-
-class ReleaseDecision(str, Enum):
-    READY = "READY"
-    REVIEW_REQUIRED = "REVIEW_REQUIRED"
-    BLOCKED = "BLOCKED"
+    # Explanation of why this source location is relevant.
+    reasoning: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
 # Project / language detection
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ProjectInfo:
-    """Evidence of a detected project/language in the repository."""
+    """Information about a detected project inside a repository.
+
+    ``project_path`` is relative to the repository root.
+
+    Examples:
+        "." -> repository root
+        "python-app" -> repository/python-app
+        "services/api" -> repository/services/api
+    """
 
     language: Language
-    confidence: float          # 0.0 – 1.0
+    confidence: float
+
+    # Files used as evidence when detecting this project.
     evidence_files: list[str] = field(default_factory=list)
+
+    # Relative directory containing the actual project.
+    project_path: str = "."
+
+    # Detected command used to run the project's tests.
     test_command: Optional[str] = None
-    test_command_available: Optional[bool] = None  # None = not yet checked
+
+    # Whether the required test tool is available.
+    # None means availability has not yet been checked.
+    test_command_available: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------
 # Test execution
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TestFailure:
     """A single failing test case."""
 
     name: str
+
     error_text: str = ""
+
+    # Test file path, when known.
     file_path: Optional[str] = None
 
-    # Traceback-derived location of the assertion that failed
-    # (the innermost frame in the test itself, not inside the app)
-    tb_file: Optional[str] = None   # relative path
-    tb_line: Optional[int] = None   # 1-based line number
+    # Traceback-derived source location.
+    tb_file: Optional[str] = None
+    tb_line: Optional[int] = None
 
-    # Expected / actual values extracted from assertion output
+    # Expected / actual values extracted from assertion output.
     expected_value: Optional[str] = None
     actual_value: Optional[str] = None
 
 
 @dataclass
 class TestRunResult:
-    """Outcome of executing a test suite."""
+    """Outcome of executing a project's test suite."""
 
     project: ProjectInfo
+
+    # Command that was actually executed.
     command: str
+
+    # Process exit code.
     exit_code: int
+
+    # Raw command output.
     stdout: str
     stderr: str
+
+    # Execution duration in seconds.
     duration_seconds: float
 
+    # Parsed test counts.
+    #
+    # None means the output could not be reliably parsed.
+    # 0 means the parser positively determined zero tests.
     total: Optional[int] = None
     passed: Optional[int] = None
     failed: Optional[int] = None
     skipped: Optional[int] = None
+
+    # Individual failing tests.
     failures: list[TestFailure] = field(default_factory=list)
 
-    # Human-readable explanation when the command couldn't even run
+    # Reason the command could not be executed.
     unavailable_reason: Optional[str] = None
 
-    # Set when the test runner started successfully but could not complete
-    # normal test collection/execution (for example, an import/collection error).
-    # This is distinct from a real failing test and from missing tooling.
+    # Reason the test runner started but could not complete normally.
+    # Example: pytest collection/import error.
     execution_error: Optional[str] = None
 
     @property
     def tooling_available(self) -> bool:
+        """Return True when the test command could be attempted."""
+
         return self.unavailable_reason is None
 
     @property
     def has_failures(self) -> bool:
         """Return True only when actual test cases are known to have failed."""
-        if self.failed is not None:
-            return self.failed > 0
-        return False
+
+        return self.failed is not None and self.failed > 0
+
+    @property
+    def has_known_test_count(self) -> bool:
+        """Return True when test counts were successfully determined."""
+
+        return self.total is not None
 
 
 # ---------------------------------------------------------------------------
 # Risk findings
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Finding:
     """A single release-risk finding."""
 
     category: FindingCategory
-    severity: Severity
-    title: str
-    summary: str
-    evidence: str
-    affected_files: list[str] = field(default_factory=list)
-    affected_tests: list[str] = field(default_factory=list)
-    confidence: float = 1.0     # 0.0 – 1.0
 
-    # Source-code evidence (may be empty if static analysis found nothing)
+    severity: Severity
+
+    title: str
+
+    summary: str
+
+    evidence: str
+
+    affected_files: list[str] = field(default_factory=list)
+
+    affected_tests: list[str] = field(default_factory=list)
+
+    confidence: float = 1.0
+
+    # Source-code evidence supporting this finding.
     source_evidence: list[SourceEvidence] = field(default_factory=list)
-    # Deterministic root-cause explanation
+
+    # Deterministic explanation of why this finding was produced.
     reasoning: Optional[str] = None
+
+    # Evidence-grounded explanation of the most likely underlying cause.
+    root_cause: Optional[str] = None
+
+    # Deterministic recommendation for resolving the finding.
+    recommended_fix: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
 # Top-level report
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RepositoryReport:
     """Complete release-readiness report for a repository."""
 
     repository_path: str
+
     projects: list[ProjectInfo] = field(default_factory=list)
+
     test_runs: list[TestRunResult] = field(default_factory=list)
+
     findings: list[Finding] = field(default_factory=list)
+
     decision: ReleaseDecision = ReleaseDecision.READY
