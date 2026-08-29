@@ -62,6 +62,7 @@ def _analyze_run(run: TestRunResult, repo_path: Optional[Path]) -> list[Finding]
     # Test execution findings
     findings.extend(_rule_tests_failed(run))
     findings.extend(_rule_no_tests_found(run))
+    findings.extend(_rule_unverified_test_execution(run))
 
     # Pattern + source-backed findings from failure names
     if run.failures:
@@ -186,6 +187,7 @@ def _rule_tests_failed(run: TestRunResult) -> list[Finding]:
 # ---------------------------------------------------------------------------
 
 def _rule_no_tests_found(run: TestRunResult) -> list[Finding]:
+    """Emit a HIGH finding when the command ran but found zero tests (total == 0)."""
     if run.execution_error:
         return []
     if run.total is None or run.total > 0:
@@ -196,7 +198,42 @@ def _rule_no_tests_found(run: TestRunResult) -> list[Finding]:
             severity=Severity.HIGH,
             title=f"No tests found in {run.project.language.value} project",
             summary="Test command ran successfully but collected zero test cases.",
-            evidence=f"command='{run.command}'  total=0",
+            evidence=f"command='{run.command}'  exit_code={run.exit_code}  total=0",
+            confidence=0.9,
+        )
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Rule: command succeeded but test counts could not be determined
+# ---------------------------------------------------------------------------
+
+def _rule_unverified_test_execution(run: TestRunResult) -> list[Finding]:
+    """Emit a HIGH finding when exit_code==0 but total is unknown (None).
+
+    CASE C: command appeared to succeed but no test count was parseable.
+    This means we cannot trust that tests actually executed.
+    """
+    if run.execution_error:
+        return []
+    if run.exit_code != 0:
+        return []
+    if run.total is not None:
+        return []
+    return [
+        Finding(
+            category=FindingCategory.TESTING,
+            severity=Severity.HIGH,
+            title=f"Could not verify test execution in {run.project.language.value} project",
+            summary=(
+                f"The test command '{run.command}' exited successfully (code 0) "
+                "but no test count could be determined from the output. "
+                "Test execution cannot be verified — release must not proceed."
+            ),
+            evidence=(
+                f"command='{run.command}'  exit_code=0  total=None\n"
+                + ((run.stdout or "")[:500] if run.stdout else "(no stdout captured)")
+            ),
             confidence=0.9,
         )
     ]

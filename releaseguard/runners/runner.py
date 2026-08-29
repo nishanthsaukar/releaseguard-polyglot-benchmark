@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
@@ -27,6 +28,12 @@ def run_tests(project: ProjectInfo, repo_path: Path) -> TestRunResult:
 
     # Run tests inside the actual detected project directory.
     cwd = _resolve_cwd(project, repo_path)
+
+    # Node.js: verify that a test script exists in package.json before running.
+    if project.language == Language.NODE:
+        missing_reason = _check_node_test_script(cwd)
+        if missing_reason:
+            return _unavailable(project, missing_reason)
 
     # Build and augment the command.
     cmd_parts = _build_cmd_parts(project)
@@ -266,6 +273,54 @@ def _install_python_deps(cwd: Path) -> None:
         # Do not crash the ReleaseGuard scan.
         # The actual pytest execution will provide useful failure evidence.
         return
+
+
+# ---------------------------------------------------------------------------
+# Node.js test script check
+# ---------------------------------------------------------------------------
+
+def _check_node_test_script(cwd: Path) -> str | None:
+    """Return an error reason if package.json has no usable test script.
+
+    Returns None when a test script is present or when package.json cannot
+    be read (in that case we let npm fail naturally so the error is captured).
+    Returns a non-empty string when the test script is explicitly absent —
+    this prevents running ``npm test`` which would exit non-zero with a
+    misleading "missing script: test" message.
+    """
+    pkg = cwd / "package.json"
+
+    if not pkg.exists():
+        return None  # no package.json; let npm fail naturally
+
+    try:
+        data = json.loads(pkg.read_text(encoding="utf-8", errors="replace"))
+    except (json.JSONDecodeError, OSError):
+        return None  # unreadable; let npm fail naturally
+
+    scripts = data.get("scripts", {})
+
+    if not isinstance(scripts, dict):
+        return "package.json scripts field is not a mapping"
+
+    if "test" not in scripts:
+        return (
+            "package.json has no 'scripts.test' command — "
+            "no test suite is configured for this Node.js project"
+        )
+
+    test_script = scripts["test"]
+    if isinstance(test_script, str) and test_script.strip().lower() in (
+        'echo "error: no test specified" && exit 1',
+        "echo 'error: no test specified' && exit 1",
+        'echo "error: no test specified"',
+    ):
+        return (
+            "package.json 'scripts.test' is the npm placeholder — "
+            "no real test suite is configured"
+        )
+
+    return None
 
 
 # ---------------------------------------------------------------------------
